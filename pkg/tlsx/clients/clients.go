@@ -172,6 +172,19 @@ type Options struct {
 	CTLBeginning bool
 	// CTLIndex allows specifying custom start index per log in the form <logURL>=<index>
 	CTLIndex goflags.StringSlice
+	// PDCP related options
+	// Dashboard enables PDCP dashboard upload
+	Dashboard bool
+	// DashboardUpload specifies a file to upload to PDCP dashboard
+	DashboardUpload string
+	// PDCPAPIKey is the API key for PDCP authentication
+	PDCPAPIKey string
+	// PDCPTeamID is the team ID for PDCP uploads
+	PDCPTeamID string
+	// PDCPAssetID is the asset ID for PDCP uploads
+	PDCPAssetID string
+	// PDCPAssetName is the asset name for PDCP uploads
+	PDCPAssetName string
 }
 
 // Response is the response returned for a TLS grab event
@@ -365,14 +378,14 @@ func IsSelfSigned(authorityKeyID, subjectKeyID []byte, SANs []string) bool {
 	if len(authorityKeyID) == 0 || bytes.Equal(authorityKeyID, subjectKeyID) {
 		return true
 	}
-	
+
 	// Additional check for poorly generated self-signed certificates:
 	// Only flag as self-signed if BOTH no SANs AND no authority key ID
 	// This avoids false positives with legitimate intermediate CAs
 	if len(SANs) == 0 && len(authorityKeyID) == 0 {
 		return true
 	}
-	
+
 	return false
 }
 

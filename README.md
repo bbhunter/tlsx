@@ -138,6 +138,14 @@ OUTPUT:
    -v, -verbose        display verbose output
    -version            display project version
 
+PDCP:
+   -pd, -dashboard              upload or view output in the PDCP UI dashboard
+   -pdu, -dashboard-upload string  upload tlsx output file (JSONL format) to the PDCP UI dashboard
+   -auth string                  PDCP API key for authentication
+   -tid, -team-id string         upload asset results to a specified team ID
+   -aid, -asset-id string        upload new assets to an existing asset ID
+   -aname, -asset-name string    asset group name
+
 DEBUG:
    -health-check, -hc  run diagnostic check up
 ```
@@ -419,6 +427,43 @@ echo example.com | tlsx -json -silent | jq .
   "tls_connection": "ctls",
   "sni": "example.com"
 }
+```
+
+### PDCP Dashboard Integration
+
+**tlsx** supports uploading scan results to the ProjectDiscovery Cloud Platform (PDCP) dashboard for visualization and analysis.
+
+#### Uploading Results in Real-Time
+
+Enable dashboard upload to automatically upload results as they are discovered:
+
+```console
+$ tlsx -u example.com -pd -json
+```
+
+Results will be automatically uploaded to PDCP and you'll receive a dashboard URL to view them.
+
+#### Uploading an Existing File
+
+Upload a previously saved JSONL output file to PDCP:
+
+```console
+$ tlsx -pdu results.jsonl -tid your-team-id -aname "My Scan"
+```
+
+#### Configuration Options
+
+- `-pd, --dashboard`: Enable real-time upload to PDCP dashboard
+- `-pdu, --dashboard-upload <file>`: Upload a specific JSONL file to PDCP
+- `-auth <key>`: PDCP API key (can also be set via environment or credentials handler)
+- `-tid, --team-id <id>`: Specify team ID for uploads
+- `-aid, --asset-id <id>`: Upload to an existing asset ID
+- `-aname, --asset-name <name>`: Set a custom name for the asset group
+
+Example with all options:
+
+```console
+$ tlsx -u example.com -pd -json -tid team123 -aname "Production Scan"
 ```
 
 ## Configuration
