@@ -149,6 +149,15 @@ func readFlags(args ...string) error {
 		flagSet.BoolVar(&options.Version, "version", false, "display project version"),
 	)
 
+	flagSet.CreateGroup("pdcp", "PDCP",
+		flagSet.BoolVarP(&options.Dashboard, "dashboard", "pd", false, "upload or view output in the PDCP UI dashboard"),
+		flagSet.StringVarP(&options.DashboardUpload, "dashboard-upload", "pdu", "", "upload tlsx output file (JSONL format) to the PDCP UI dashboard"),
+		flagSet.StringVarP(&options.PDCPAPIKey, "auth", "", "", "PDCP API key for authentication"),
+		flagSet.StringVarP(&options.PDCPTeamID, "team-id", "tid", "", "upload asset results to a specified team ID"),
+		flagSet.StringVarP(&options.PDCPAssetID, "asset-id", "aid", "", "upload new assets to an existing asset ID"),
+		flagSet.StringVarP(&options.PDCPAssetName, "asset-name", "aname", "", "asset group name"),
+	)
+
 	flagSet.CreateGroup("debug", "Debug",
 		flagSet.BoolVarP(&options.HealthCheck, "hc", "health-check", false, "run diagnostic check up"),
 	)
