@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/tlsx/pkg/tlsx/clients"
 	"github.com/projectdiscovery/retryablehttp-go"
+	"github.com/projectdiscovery/tlsx/pkg/tlsx/clients"
 	pdcpauth "github.com/projectdiscovery/utils/auth/pdcp"
 	"github.com/projectdiscovery/utils/conversion"
 	"github.com/projectdiscovery/utils/env"
@@ -98,7 +98,7 @@ func (u *UploadWriter) GetWriterCallback() func(*clients.Response) {
 // SetAssetID sets the scan id for the upload writer
 func (u *UploadWriter) SetAssetID(id string) error {
 	if !xidRegex.MatchString(id) {
-		return fmt.Errorf("invalid asset id provided")
+		gologger.Warning().Msgf("invalid asset id provided (unknown xid format): %s", id)
 	}
 	u.assetGroupID = id
 	return nil
@@ -263,4 +263,3 @@ func (u *UploadWriter) Close() {
 	}
 	<-u.done
 }
-
