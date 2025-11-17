@@ -172,6 +172,19 @@ type Options struct {
 	CTLBeginning bool
 	// CTLIndex allows specifying custom start index per log in the form <logURL>=<index>
 	CTLIndex goflags.StringSlice
+	// PDCP related options
+	// Dashboard enables PDCP dashboard upload
+	Dashboard bool
+	// DashboardUpload specifies a file to upload to PDCP dashboard
+	DashboardUpload string
+	// PDCPAPIKey is the API key for PDCP authentication
+	PDCPAPIKey string
+	// PDCPTeamID is the team ID for PDCP uploads
+	PDCPTeamID string
+	// PDCPAssetID is the asset ID for PDCP uploads
+	PDCPAssetID string
+	// PDCPAssetName is the asset name for PDCP uploads
+	PDCPAssetName string
 }
 
 // Response is the response returned for a TLS grab event
@@ -211,6 +224,12 @@ type Response struct {
 	ClientCertRequired *bool                  `json:"client_cert_required,omitempty"`
 	// CTLogSource is the Certificate Transparency log source for CT logs mode
 	CTLogSource string `json:"ctl_source,omitempty"`
+	// CTLogIndex is the index/offset of this entry in the CT log
+	CTLogIndex uint64 `json:"ctl_index,omitempty"`
+	// CTLogTreeSize is the total number of entries in the CT log (head)
+	CTLogTreeSize uint64 `json:"ctl_tree_size,omitempty"`
+	// CTLogLag is the number of pending entries (TreeSize - Index)
+	CTLogLag uint64 `json:"ctl_lag,omitempty"`
 }
 
 type TlsCiphers struct {
@@ -359,14 +378,14 @@ func IsSelfSigned(authorityKeyID, subjectKeyID []byte, SANs []string) bool {
 	if len(authorityKeyID) == 0 || bytes.Equal(authorityKeyID, subjectKeyID) {
 		return true
 	}
-	
+
 	// Additional check for poorly generated self-signed certificates:
 	// Only flag as self-signed if BOTH no SANs AND no authority key ID
 	// This avoids false positives with legitimate intermediate CAs
 	if len(SANs) == 0 && len(authorityKeyID) == 0 {
 		return true
 	}
-	
+
 	return false
 }
 

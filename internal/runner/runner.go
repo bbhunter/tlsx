@@ -2,6 +2,8 @@ package runner
 
 import (
 	"bufio"
+	"context"
+	"encoding/json"
 	"net"
 	"net/url"
 	"os"
@@ -20,13 +22,15 @@ import (
 	"github.com/projectdiscovery/gologger/levels"
 	"github.com/projectdiscovery/mapcidr"
 	"github.com/projectdiscovery/mapcidr/asn"
+	"github.com/projectdiscovery/tlsx/internal/pdcp"
 	"github.com/projectdiscovery/tlsx/pkg/ctlogs"
 	"github.com/projectdiscovery/tlsx/pkg/output"
 	"github.com/projectdiscovery/tlsx/pkg/output/stats"
 	"github.com/projectdiscovery/tlsx/pkg/tlsx"
 	"github.com/projectdiscovery/tlsx/pkg/tlsx/clients"
 	"github.com/projectdiscovery/tlsx/pkg/tlsx/openssl"
-	errorutil "github.com/projectdiscovery/utils/errors"
+	pdcpauth "github.com/projectdiscovery/utils/auth/pdcp"
+	"github.com/projectdiscovery/utils/errkit" //nolint
 	iputil "github.com/projectdiscovery/utils/ip"
 	sliceutil "github.com/projectdiscovery/utils/slice"
 	updateutils "github.com/projectdiscovery/utils/update"
@@ -41,6 +45,7 @@ type Runner struct {
 	fastDialer   *fastdialer.Dialer
 	options      *clients.Options
 	dnsclient    *dnsx.DNSX
+	pdcpWriter   *pdcp.UploadWriter
 }
 
 // New creates a new runner from provided configuration options
@@ -79,7 +84,7 @@ func New(options *clients.Options) (*Runner, error) {
 
 	runner := &Runner{options: options}
 	if err := runner.validateOptions(); err != nil {
-		return nil, errorutil.NewWithErr(err).Msgf("could not validate options")
+		return nil, errkit.Wrap(err, "could not validate options")
 	}
 
 	dialerTimeout := time.Duration(options.Timeout) * time.Second
@@ -88,14 +93,14 @@ func New(options *clients.Options) (*Runner, error) {
 	if options.Proxy != "" {
 		proxyURL, err := url.Parse(options.Proxy)
 		if err != nil {
-			return nil, errorutil.NewWithErr(err).Msgf("could not parse proxy")
+			return nil, errkit.Wrap(err, "could not parse proxy")
 		}
 		dialer, err := proxy.FromURL(proxyURL, &net.Dialer{
 			Timeout:   dialerTimeout,
 			DualStack: true,
 		})
 		if err != nil {
-			return nil, errorutil.NewWithErr(err).Msgf("could not create proxy dialer")
+			return nil, errkit.Wrap(err, "could not create proxy dialer")
 		}
 		proxyDialer = &dialer
 	}
@@ -112,7 +117,7 @@ func New(options *clients.Options) (*Runner, error) {
 	}
 	fastDialer, err := fastdialer.NewDialer(dialerOpts)
 	if err != nil {
-		return nil, errorutil.NewWithErr(err).Msgf("could not create dialer")
+		return nil, errkit.Wrap(err, "could not create dialer")
 	}
 	runner.fastDialer = fastDialer
 	runner.options.Fastdialer = fastDialer
@@ -131,9 +136,42 @@ func New(options *clients.Options) (*Runner, error) {
 
 	outputWriter, err := output.New(options)
 	if err != nil {
-		return nil, errorutil.NewWithErr(err).Msgf("could not create output writer")
+		return nil, errkit.Wrap(err, "could not create output writer")
 	}
 	runner.outputWriter = outputWriter
+
+	// Initialize PDCP upload writer if dashboard is enabled
+	if options.Dashboard {
+		handler := pdcpauth.PDCPCredHandler{}
+		creds, err := handler.GetCreds()
+		if err != nil {
+			if options.Verbose {
+				gologger.Warning().Msgf("Could not get PDCP credentials: %s", err)
+			}
+		} else {
+			ctx := context.Background()
+			pdcpWriter, err := pdcp.NewUploadWriterCallback(ctx, creds)
+			if err != nil {
+				if options.Verbose {
+					gologger.Warning().Msgf("Could not initialize PDCP upload writer: %s", err)
+				}
+			} else {
+				if options.PDCPAssetID != "" {
+					if err := pdcpWriter.SetAssetID(options.PDCPAssetID); err != nil {
+						gologger.Warning().Msgf("Invalid asset ID: %s", err)
+					}
+				}
+				if options.PDCPAssetName != "" {
+					pdcpWriter.SetAssetGroupName(options.PDCPAssetName)
+				}
+				if options.PDCPTeamID != "" {
+					pdcpWriter.SetTeamID(options.PDCPTeamID)
+				}
+				runner.pdcpWriter = pdcpWriter
+			}
+		}
+	}
+
 	if options.TlsCiphersEnum && !options.Silent {
 		gologger.Info().Msgf("Enumerating TLS Ciphers in %s mode", options.ScanMode)
 	}
@@ -144,6 +182,57 @@ func New(options *clients.Options) (*Runner, error) {
 // Close closes the runner releasing resources
 func (r *Runner) Close() error {
 	_ = r.outputWriter.Close()
+
+	// Close PDCP writer if enabled
+	if r.pdcpWriter != nil {
+		r.pdcpWriter.Close()
+	}
+
+	// Handle dashboard-upload flag for file uploads
+	if r.options.DashboardUpload != "" {
+		handler := pdcpauth.PDCPCredHandler{}
+		creds, err := handler.GetCreds()
+		if err != nil {
+			gologger.Warning().Msgf("Could not get PDCP credentials for file upload: %s", err)
+		} else {
+			ctx := context.Background()
+			pdcpWriter, err := pdcp.NewUploadWriterCallback(ctx, creds)
+			if err != nil {
+				gologger.Warning().Msgf("Could not initialize PDCP upload writer for file: %s", err)
+			} else {
+				if r.options.PDCPAssetID != "" {
+					if err := pdcpWriter.SetAssetID(r.options.PDCPAssetID); err != nil {
+						gologger.Warning().Msgf("Invalid asset ID: %s", err)
+					}
+				}
+				if r.options.PDCPAssetName != "" {
+					pdcpWriter.SetAssetGroupName(r.options.PDCPAssetName)
+				}
+				if r.options.PDCPTeamID != "" {
+					pdcpWriter.SetTeamID(r.options.PDCPTeamID)
+				}
+
+				// Read file and upload line by line
+				file, err := os.Open(r.options.DashboardUpload)
+				if err != nil {
+					gologger.Warning().Msgf("Could not open file for upload: %s", err)
+				} else {
+					defer file.Close()
+					scanner := bufio.NewScanner(file)
+					callback := pdcpWriter.GetWriterCallback()
+					for scanner.Scan() {
+						line := scanner.Bytes()
+						var resp clients.Response
+						if err := json.Unmarshal(line, &resp); err == nil {
+							callback(&resp)
+						}
+					}
+					pdcpWriter.Close()
+				}
+			}
+		}
+	}
+
 	r.fastDialer.Close()
 	return nil
 }
@@ -186,6 +275,7 @@ func (r *Runner) Execute() error {
 	if r.options.ScanMode == "auto" {
 		gologger.Info().Msgf("Connections made using crypto/tls: %d, zcrypto/tls: %d, openssl: %d", stats.LoadCryptoTLSConnections(), stats.LoadZcryptoTLSConnections(), stats.LoadOpensslTLSConnections())
 	}
+
 	return nil
 }
 
@@ -241,13 +331,31 @@ func (r *Runner) executeCTLogsMode() error {
 			return
 		}
 
-		resp := ctlogs.ConvertCertificateToResponse(cert, meta.SourceDesc, r.options.Cert)
+		// Display CT log progress information in verbose mode
+		if r.options.Verbose {
+			progressPercent := float64(meta.Index) / float64(meta.TreeSize) * 100
+			gologger.Info().Msgf("[CT] %s: Index %d/%d (%.1f%%), Lag: %d, URL: %s",
+				meta.SourceDesc, meta.Index, meta.TreeSize, progressPercent, meta.Lag, meta.LogURL)
+		}
+
+		resp := ctlogs.ConvertCertificateToResponseWithMeta(cert, meta.SourceDesc, r.options.Cert, &meta)
 		if resp == nil {
 			return
 		}
 
+		// Enhance response with CT log metadata
+		if resp.CTLogSource == "" {
+			resp.CTLogSource = meta.SourceID
+		}
+
 		if err := r.outputWriter.Write(resp); err != nil {
 			gologger.Warning().Msgf("Could not write CT log output: %s", err)
+		}
+
+		// Send to PDCP if enabled
+		if r.pdcpWriter != nil {
+			callback := r.pdcpWriter.GetWriterCallback()
+			callback(resp)
 		}
 	}
 
@@ -255,7 +363,7 @@ func (r *Runner) executeCTLogsMode() error {
 
 	ctService, err := ctlogs.New(svcOpts...)
 	if err != nil {
-		return errorutil.NewWithErr(err).Msgf("could not create CT logs service")
+		return errkit.Wrap(err, "could not create CT logs service")
 	}
 
 	// Start streaming
@@ -301,6 +409,12 @@ func (r *Runner) processInputElementWorker(inputs chan taskInput, wg *sync.WaitG
 			gologger.Warning().Msgf("Could not write output %s: %s", task.Address(), err)
 			continue
 		}
+
+		// Send to PDCP if enabled
+		if r.pdcpWriter != nil {
+			callback := r.pdcpWriter.GetWriterCallback()
+			callback(response)
+		}
 	}
 }
 
@@ -314,7 +428,7 @@ func (r *Runner) normalizeAndQueueInputs(inputs chan taskInput) error {
 	if r.options.InputList != "" {
 		file, err := os.Open(r.options.InputList)
 		if err != nil {
-			return errorutil.NewWithErr(err).Msgf("could not open input file")
+			return errkit.Wrap(err, "could not open input file")
 		}
 		defer func() {
 			if err := file.Close(); err != nil {
